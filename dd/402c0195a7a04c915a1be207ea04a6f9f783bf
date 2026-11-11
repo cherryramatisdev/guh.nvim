@@ -1,0 +1,21 @@
+lua/guh/provider/gitlab.lua
+  s_15307ed3a575cf::t_6e3fc1c33744f7 907
+  s_15307ed3a575cf::t_76da7e0963649a 518-520
+  s_15307ed3a575cf::t_3341bbf18a5a23 712,714,717-736,739,745-759
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dd402c0195a7a04c915a1be207ea04a6f9f783bf",
+  "prompts": {},
+  "sessions": {
+    "s_15307ed3a575cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9e35a60-b7b1-4c7b-b2c3-1faa8f80fb9d",
+        "model": "deepseek-v4.1-flash"
+      },
+      "human_author": "Cherry Ramatis <cherry.ramatis@icloud.com>"
+    }
+  }
+}
