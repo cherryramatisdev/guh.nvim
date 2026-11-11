@@ -138,11 +138,6 @@ end
 --- @param args vim.api.keyset.create_user_command.command_args
 --- @overload fun(feat: Feat, id?: integer|string, repo?: string)
 function M.select(args, id, repo)
-  if not gh.get_user() then
-    util.msg('Not logged in to gh. Run: "gh auth login"', vim.log.levels.ERROR)
-    return
-  end
-
   -- Overloads:
   -- - cmdargs for :Guh.
   -- - `{feat, id, repo}` for programmatic callers.
@@ -196,7 +191,29 @@ function M.select(args, id, repo)
   -- Remember which provider owns this repo, so the `guh.gh` shim picks the right backend. The
   -- host comes from the raw argument (a web URL), since `util.parse_target` deliberately drops it.
   if repo then
-    require('guh.provider').register(repo, require('guh.remote').host_of(arg))
+    local provider = require('guh.provider')
+    local remote_mod = require('guh.remote')
+    local host = remote_mod.host_of(arg)
+    if host then
+      provider.register(repo, host)
+    elseif not provider.registered(repo) then
+      -- Not a URL: a bare slug or a `guh://` URI names no host, so resolve the CWD's remote
+      -- (sync, cached once per session) instead of letting the shim fall back to a stale default.
+      local default = remote_mod.sync_provider()
+      if default then
+        provider.register(repo, nil, default)
+        provider.set_default(default)
+      end
+    end
+  end
+
+  -- Check auth for the *resolved* provider. Must run after the repo (and thus the backend) is
+  -- known: doing it up front would test GitHub credentials for a GitLab repo, which locks out
+  -- users who only have `glab` configured.
+  if not gh.get_user() then
+    local bin = gh.name() == 'gitlab' and 'glab' or 'gh'
+    util.msg(('Not logged in to %s. Run: "%s auth login"'):format(bin, bin), vim.log.levels.ERROR)
+    return
   end
   -- PR/issue/commit target needs a repo; bare `:Guh` falls back to status if none resolves.
   if target and (target.id or target.sha) and not repo then

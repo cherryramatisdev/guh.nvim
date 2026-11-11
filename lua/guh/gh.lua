@@ -25,6 +25,13 @@ function M.provider()
   return provider.current()
 end
 
+--- Name of the active provider ('github'|'gitlab').
+---
+--- @return 'github'|'gitlab'
+function M.name()
+  return provider.current_name()
+end
+
 --- Feature capabilities of the active provider, so callers can degrade instead of erroring.
 ---
 --- @return table<string, boolean>

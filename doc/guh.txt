@@ -41,6 +41,10 @@ Guh picks a backend from the git remote of the repo it is looking at:
   instances work when the hostname contains neither word (e.g.
   "git.example.com").
 
+When no host is available (a "guh://…" URI or a bare "group/project#1" slug
+name none), Guh falls back to the project path: GitHub slugs are always
+"owner/name", so a nested path ("group/subgroup/project") can only be GitLab.
+
 To force a backend, set a global before the plugin loads: >lua
   vim.g.guh_provider = 'gitlab'  -- or 'github'
 <

@@ -267,6 +267,74 @@ describe('guh.provider.gitlab', function()
     end)
   end)
 
+  it('resolves a nested repo to GitLab even when it was never registered', function()
+    n.exec_lua(function()
+      local provider = require('guh.provider')
+      local state = require('guh.state')
+      -- Regression: a repo reached via a `guh://` URI or a bare slug carries no host, so it is
+      -- never registered. GitHub slugs are always "owner/name", so a 3+ segment path can only be
+      -- GitLab -- previously this fell through to the session default ("github") and drove `gh`
+      -- against a GitLab repo.
+      local buf = state.init_buf('pr', nil, 'group/sub/proj', 9)
+      vim.api.nvim_set_current_buf(buf)
+      assert(provider.registered('group/sub/proj') == nil, 'precondition: repo is unregistered')
+      assert(
+        provider.current_name() == 'gitlab',
+        ('unregistered nested repo resolved to %q'):format(provider.current_name())
+      )
+      -- The shim must therefore reach for `glab`.
+      assert(require('guh.gh').name() == 'gitlab', 'guh.gh shim should report gitlab')
+    end)
+  end)
+
+  it('builds a glab argv (not gh) for an unregistered nested repo', function()
+    n.exec_lua(function()
+      local provider = require('guh.provider')
+      local state = require('guh.state')
+      local util = require('guh.util')
+      local buf = state.init_buf('pr', nil, 'group/sub/proj', 9)
+      vim.api.nvim_set_current_buf(buf)
+
+      local recorded = {}
+      local orig = util.system
+      util.system = function(cmd)
+        table.insert(recorded, cmd) -- Record only; never call through (no network).
+      end
+      require('guh.provider.gitlab').get_pr_data(9, 'group/sub/proj', { force = true }, function() end)
+      util.system = orig
+
+      assert(recorded[1], 'no argv recorded')
+      assert(recorded[1][1] == 'glab', ('expected the glab binary, got %q'):format(recorded[1][1]))
+      assert(
+        recorded[1][#recorded[1]] == 'projects/group%2Fsub%2Fproj/merge_requests/9',
+        ('unexpected endpoint: %s'):format(recorded[1][#recorded[1]])
+      )
+    end)
+  end)
+
+  it('a registered host is authoritative and supplies --hostname', function()
+    n.exec_lua(function()
+      local provider = require('guh.provider')
+      local state = require('guh.state')
+      local util = require('guh.util')
+      provider.register('group/sub/proj', 'git.example.com')
+      local buf = state.init_buf('pr', nil, 'group/sub/proj', 9)
+      vim.api.nvim_set_current_buf(buf)
+      assert(provider.current_name() == 'gitlab', 'registered gitlab host')
+
+      local recorded = {}
+      local orig = util.system
+      util.system = function(cmd)
+        table.insert(recorded, cmd)
+      end
+      require('guh.provider.gitlab').get_pr_data(9, 'group/sub/proj', { force = true }, function() end)
+      util.system = orig
+
+      local argv = table.concat(recorded[1] or {}, ' ')
+      assert(argv:find('--hostname git.example.com', 1, true), ('missing --hostname: %s'):format(argv))
+    end)
+  end)
+
   it('builds GitLab argv for the shared call sites', function()
     n.exec_lua(function()
       local gl = require('guh.provider.gitlab')

@@ -73,26 +73,50 @@ function M.set_default(name)
   M.default_provider = name
 end
 
---- The provider for the current context.
+--- Provider implied by a repo path alone.
+---
+--- GitHub project slugs are always exactly two segments ("owner/name"); GitLab projects may be
+--- nested ("group/subgroup/project"). So a 3+ segment path can only be GitLab.
+---
+--- @param repo string
+--- @return 'gitlab'|nil
+local function provider_for_path(repo)
+  return select(2, repo:gsub('/', '/')) >= 2 and 'gitlab' or nil
+end
+
+--- Name of the provider for the current context.
 ---
 --- 1. `vim.g.guh_provider` override, when set.
---- 2. The current buffer's `b:guh.repo`, if it was registered this session.
---- 3. The last resolved repo's provider (see `M.default_provider`).
+--- 2. The current buffer's `b:guh.repo`, if it was registered this session. Authoritative: the
+---    host was known when the repo was resolved.
+--- 3. The repo path's shape (nested => GitLab). Catches repos reached via a `guh://` URI or a
+---    bare slug, which carry no host and so are never registered.
+--- 4. The session default (see `M.default_provider`).
 ---
---- Limitation: acting on a buffer whose repo was never registered this session, while the
---- resolved repo is a *different* host, falls back to (3). Registration happens on every `:Guh`.
----
---- @return table
-function M.current()
+--- @return 'github'|'gitlab'
+function M.current_name()
   local override = vim.g.guh_provider
   if override == 'github' or override == 'gitlab' then
-    return M.get(override)
+    return override
   end
-  local entry = registry[(vim.b.guh or {}).repo]
-  if entry then
-    return M.get(entry.provider)
+  local repo = (vim.b.guh or {}).repo
+  if repo then
+    local entry = registry[repo]
+    if entry then
+      return entry.provider
+    end
+    local implied = provider_for_path(repo)
+    if implied then
+      return implied
+    end
   end
-  return M.get(M.default_provider)
+  return M.default_provider
+end
+
+--- The provider module for the current context.
+--- @return table
+function M.current()
+  return M.get(M.current_name())
 end
 
 --- Feature capabilities of the current provider.

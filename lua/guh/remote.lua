@@ -7,6 +7,10 @@ local util = require('guh.util')
 
 local M = {}
 
+--- Session cache for `M.sync_provider`.
+--- @type 'github'|'gitlab'|nil
+local cached_provider
+
 --- Maps a remote host to a provider name.
 ---
 --- Rule (deliberate): any host containing "github" is GitHub; **every other host is GitLab**.
@@ -22,6 +26,25 @@ function M.provider_for_host(host)
     return override
   end
   return (host or ''):lower():find('github', 1, true) and 'github' or 'gitlab'
+end
+
+--- Synchronously resolves the provider of `dir`'s git remote, cached for the session.
+---
+--- Used before any async resolution has run, so `guh.provider.current()`'s fallback reflects the
+--- actual repo instead of a hard-coded guess. One `git remote get-url` per session.
+---
+--- @param dir? string
+--- @return 'github'|'gitlab'|nil
+function M.sync_provider(dir)
+  if cached_provider then
+    return cached_provider
+  end
+  local r = vim.system({ 'git', 'remote', 'get-url', 'origin' }, { cwd = dir, text = true }):wait()
+  local parsed = M.parse_url(r.code == 0 and vim.trim(r.stdout or '') or '')
+  if parsed then
+    cached_provider = M.provider_for_host(parsed.host)
+  end
+  return cached_provider
 end
 
 --- Extracts the host from a web URL argument, or nil if `arg` isn't a URL.
