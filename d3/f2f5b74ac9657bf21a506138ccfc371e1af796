@@ -1,0 +1,33 @@
+lua/guh/provider/init.lua
+  s_15307ed3a575cf::t_cacf106b7b4c57 76,78-79,81-86,90-94,102-105,107-109,111
+  s_15307ed3a575cf::t_b6c6b72fbbfa9d 87,96-97,100,106,110,113-119
+  s_15307ed3a575cf::t_77ca3c7597d9b5 89
+  s_15307ed3a575cf::t_dc51fe4e3171f1 95
+lua/guh/gh.lua
+  s_15307ed3a575cf::t_291011e21f413d 28-34
+lua/guh/remote.lua
+  s_15307ed3a575cf::t_6a9998dd583f94 31-49
+  s_15307ed3a575cf::t_bbc9754c5eede8 10-13
+test/gitlab_spec.lua
+  s_15307ed3a575cf::t_785047abb43e4a 270-337
+doc/guh.txt
+  s_15307ed3a575cf::t_d1dd0332c7338d 44-47
+lua/guh/pr.lua
+  s_15307ed3a575cf::t_92832a792dc242 194-216
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d3f2f5b74ac9657bf21a506138ccfc371e1af796",
+  "prompts": {},
+  "sessions": {
+    "s_15307ed3a575cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9e35a60-b7b1-4c7b-b2c3-1faa8f80fb9d",
+        "model": "deepseek-v4.1-flash"
+      },
+      "human_author": "Cherry Ramatis <cherry.ramatis@icloud.com>"
+    }
+  }
+}
