@@ -70,9 +70,9 @@ vim.api.nvim_create_autocmd('BufEnter', {
   end,
 })
 
--- :syncbind the prdiff/prcomments windows.
+-- :syncbind the prdiff/prcomments windows. (`*` spans "/", so nested GitLab group paths match.)
 vim.api.nvim_create_autocmd({ 'WinEnter', 'WinResized' }, {
-  pattern = [[guh://[^/]\+/[^/]\+/{prdiff,prcomments}/*]],
+  pattern = [[guh://*/{prdiff,prcomments}/*]],
   group = group,
   command = 'if &l:scrollbind | keepjumps syncbind | endif',
 })
@@ -82,7 +82,7 @@ vim.api.nvim_create_autocmd({ 'WinEnter', 'WinResized' }, {
 -- - "gh" annoyingly indents pr/issue comments
 -- - :terminal (currently, probably?) overuses whitespace where it should have negative space.
 vim.api.nvim_create_autocmd('TextYankPost', {
-  pattern = [[guh://[^/]\+/[^/]\+/issue/*]],
+  pattern = [[guh://*/issue/*]],
   group = group,
   callback = function()
     local feat = (vim.b.guh or {}).feat
