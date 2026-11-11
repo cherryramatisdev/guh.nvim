@@ -1,0 +1,14 @@
+lua/guh/provider/github.lua
+  h_3fa0a37c1df293 1-933
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "339f54f079d718e26efb622aabd978841b2a5f6c",
+  "prompts": {},
+  "humans": {
+    "h_3fa0a37c1df293": {
+      "author": "Cherry Ramatis <cherry.ramatis@icloud.com>"
+    }
+  }
+}
