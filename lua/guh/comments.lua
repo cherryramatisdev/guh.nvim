@@ -693,7 +693,7 @@ function M.delete_comment(linenr)
       return
     end
     local progress = util.new_progress_report('Deleting comment...', buf)
-    local ok, err = async.await(3, gh.delete_comment, c.id, repo)
+    local ok, err = async.await(4, gh.delete_comment, c.id, repo, prnum)
     if ok then
       progress('success', nil, 'Comment deleted.')
       require('guh.pr').refresh({ feat = 'pr', id = prnum, repo = repo })
@@ -727,7 +727,7 @@ function M.update_comment(linenr)
       return
     end
     local progress = util.new_progress_report('Updating comment...', vim.api.nvim_get_current_buf())
-    local resp = async.await(4, gh.update_comment, c.id, input, repo)
+    local resp = async.await(5, gh.update_comment, c.id, input, repo, prnum)
     if resp['errors'] == nil then
       progress('success', nil, 'Comment updated.')
       require('guh.pr').refresh({ feat = 'pr', id = prnum, repo = repo })
@@ -765,7 +765,7 @@ function M.reply_or_resolve(linenr)
         return
       end
       local progress = util.new_progress_report('Sending reply...', vim.api.nvim_get_current_buf())
-      local resp = async.await(5, gh.reply_to_comment, prnum, input, c.id, repo)
+      local resp = async.await(6, gh.reply_to_comment, prnum, input, c.id, repo, c.thread_node_id)
       if resp['errors'] == nil then
         progress('success', nil, 'Reply sent.')
         require('guh.pr').refresh({ feat = 'pr', id = prnum, repo = repo })
@@ -777,7 +777,7 @@ function M.reply_or_resolve(linenr)
         return util.msg('Missing thread_node_id (refresh and retry)', vim.log.levels.WARN)
       end
       local progress = util.new_progress_report(('%s thread...'):format(resolve and 'Resolving' or 'Unresolving'), buf)
-      local resp = async.await(3, gh.resolve_thread, c.thread_node_id, resolve)
+      local resp = async.await(5, gh.resolve_thread, c.thread_node_id, resolve, repo, prnum)
       if resp['errors'] == nil then
         progress('success', nil, ('Thread %s.'):format(resolve and 'resolved' or 'unresolved'))
         require('guh.pr').refresh({ feat = 'pr', id = prnum, repo = repo })
