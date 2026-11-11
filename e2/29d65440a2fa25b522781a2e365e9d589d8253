@@ -1,0 +1,14 @@
+plugin/guh.lua
+  h_3fa0a37c1df293 73,75,85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e229d65440a2fa25b522781a2e365e9d589d8253",
+  "prompts": {},
+  "humans": {
+    "h_3fa0a37c1df293": {
+      "author": "Cherry Ramatis <cherry.ramatis@icloud.com>"
+    }
+  }
+}
