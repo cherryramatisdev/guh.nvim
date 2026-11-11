@@ -7,7 +7,13 @@ local util = require('guh.util')
 
 local async = vim.async
 local await_edit_comment = async.wrap(5, comments.edit_comment)
-local await_get_pr_data = async.wrap(4, gh.get_pr_data)
+
+--- @async
+--- Resolves the provider per call (through the `guh.gh` shim) instead of capturing a function at
+--- module load: a session that mixes GitHub and GitLab repos must use the right backend.
+local function await_get_pr_data(...)
+  return async.await(4, require('guh.gh').get_pr_data, ...)
+end
 
 local M = {}
 
@@ -31,10 +37,12 @@ function M.highlight_notifs(buf)
   end
 end
 
---- Resolves the repo "owner/name" for the current buffer, may block up to 5s.
+--- Resolves the repo project path for the current buffer, may block up to 5s.
 --- 1. checks `b:guh.repo`.
---- 2. else, locates .git/ relative to curbuf.
---- 3. else, locates .git/ relative to getcwd().
+--- 2. else, resolves the git remote relative to curbuf.
+--- 3. else, resolves the git remote relative to getcwd().
+---
+--- Also registers the repo with its provider (see `guh.provider`).
 ---
 --- @return string?
 local function resolve_repo()
@@ -46,8 +54,8 @@ local function resolve_repo()
   local is_uri = bufname:match('^%w+://')
   local dir = (bufname ~= '' and not is_uri) and vim.fs.dirname(bufname) or vim.fn.getcwd()
 
-  local ok, repo = async.run(async.wrap(2, gh.get_repo), dir):pwait(5000)
-  return ok and repo or nil
+  local ok, remote = async.run(async.wrap(2, require('guh.remote').resolve), dir):pwait(5000)
+  return ok and remote and remote.path or nil
 end
 
 --- Finds the first `pr/…` buffer matching the given commit `sha`.
@@ -185,6 +193,11 @@ function M.select(args, id, repo)
   if not (target and target.status) then
     repo = repo or (target and target.owner and ('%s/%s'):format(target.owner, target.repo)) or resolve_repo()
   end
+  -- Remember which provider owns this repo, so the `guh.gh` shim picks the right backend. The
+  -- host comes from the raw argument (a web URL), since `util.parse_target` deliberately drops it.
+  if repo then
+    require('guh.provider').register(repo, require('guh.remote').host_of(arg))
+  end
   -- PR/issue/commit target needs a repo; bare `:Guh` falls back to status if none resolves.
   if target and (target.id or target.sha) and not repo then
     util.msg('Failed to get repo info', vim.log.levels.ERROR)
@@ -242,22 +255,12 @@ function M.show_commit(sha, repo, focus)
     return
   end
   local done = util.progress(('Loading commit %s...'):format(sha))
-  local cmd = {
-    'gh',
-    'api',
-    ('repos/%s/commits/%s'):format(repo, sha),
-    '-H',
-    'Accept: application/vnd.github.v3.patch',
-  }
-  util.system(cmd, nil, function(r)
-    if r.code ~= 0 then
-      return done('failed', vim.trim(r.stderr or ''))
+  gh.commit(sha, repo, function(res, err)
+    if not res then
+      return done('failed', err)
     end
-    -- Patch format's first line is "From <full-sha> Mon Sep 17 00:00:00 2001".
-    local full_sha = r.stdout:match('^From%s+(%x+)') or sha
-    local buf = state.init_buf('commit', focus, repo, full_sha, { id = full_sha })
-    local lines = vim.split(r.stdout, '\n', { plain = true, trimempty = true })
-    util.buf_set_readonly_lines(buf, lines, 'gitcommit')
+    local buf = state.init_buf('commit', focus, repo, res.sha, { id = res.sha })
+    util.buf_set_readonly_lines(buf, res.lines, 'gitcommit')
     util.set_default_keymaps(buf)
     done('success')
   end)
@@ -284,16 +287,12 @@ function M.show_file()
     return
   end
   local done = util.progress(('Loading %s @ %s...'):format(path, sha:sub(1, 7)))
-  local cmd =
-    { 'gh', 'api', ('repos/%s/contents/%s?ref=%s'):format(repo, path, sha), '-H', 'Accept: application/vnd.github.raw' }
-
-  util.system(cmd, nil, function(r)
-    if r.code ~= 0 then
-      return done('failed', vim.trim(r.stderr or ''))
+  gh.file(path, sha, repo, function(res, err)
+    if not res then
+      return done('failed', err)
     end
     local buf = state.init_buf('file', true, repo, key, { id = id })
-    local lines = vim.split(r.stdout, '\n', { plain = true })
-    util.buf_set_readonly_lines(buf, lines, vim.filetype.match({ filename = path }) or '')
+    util.buf_set_readonly_lines(buf, res.lines, vim.filetype.match({ filename = path }) or '')
     util.set_default_keymaps(buf)
     done('success')
   end)
@@ -600,7 +599,7 @@ function M.merge_pr()
     do_merge(choice, subject, vim.trim(body or ''))
   end
 
-  local choices = { 'squash', 'merge', 'rebase', 'squash --admin', 'merge --admin', 'rebase --admin' }
+  local choices = gh.merge_choices()
   local count = vim.v.count
   util.run_async(function()
     local choice = choices[count] or util.await_select(choices, { prompt = ('Merge PR #%s:'):format(id) })
@@ -658,53 +657,8 @@ function M.show_repo(focus, repo)
     return util.msg('Failed to resolve repo', vim.log.levels.ERROR)
   end
   local buf = state.init_buf('repo', focus, repo, 'all')
-  local owner, name = repo:match('^([^/]+)/(.+)$')
-  local query = vim.text.indent(
-    0,
-    [[
-    query($owner:String!,$name:String!){
-      repository(owner:$owner,name:$name){
-        nameWithOwner
-        defaultBranchRef{ target{ ... on Commit{ history(first:10){ nodes{ oid messageHeadline } } } } }
-        refs(refPrefix:"refs/heads/",first:4,orderBy:{field:TAG_COMMIT_DATE,direction:DESC}){nodes{name}}
-        pullRequests(first:10,states:OPEN,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number title}}
-        issues(first:10,states:OPEN,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number title}}
-      }
-    }
-  ]]
-  )
-  -- "#NNN", commit-oid, and "owner/repo/tree/<branch>" rows are `:Guh .`-openable.
-  local tmpl = vim.text.indent(
-    0,
-    [[
-    {{"\nRecent commits:\n" -}}
-    {{range .data.repository.defaultBranchRef.target.history.nodes}}{{printf "  %s  %s\n" (slice .oid 0 12) .messageHeadline}}{{end -}}
-    {{"\nBranches (last-updated): https://github.com/" -}}{{.data.repository.nameWithOwner}}{{"/branches\n" -}}
-    {{range .data.repository.refs.nodes}}{{printf "  %s/tree/%s\n" $.data.repository.nameWithOwner .name}}{{end -}}
-    {{"\nOpen PRs (last-updated):\n" -}}
-    {{range .data.repository.pullRequests.nodes}}{{printf "  %-7s%s\n" (printf "#%v" .number) .title}}{{end -}}
-    {{"\nOpen issues (last-updated):\n" -}}
-    {{range .data.repository.issues.nodes}}{{printf "  %-7s%s\n" (printf "#%v" .number) .title}}{{end}}
-  ]]
-  )
-
   util.set_default_keymaps(buf)
-  util.run_cmds(buf, { term = true }, {
-    {
-      'gh',
-      'api',
-      'graphql',
-      '-f',
-      'owner=' .. owner,
-      '-f',
-      'name=' .. name,
-      '-f',
-      'query=' .. query,
-      '--template',
-      tmpl,
-    },
-    { 'gh', 'pr', 'status', '--repo', repo },
-  })
+  util.run_cmds(buf, { term = true }, gh.repo_overview_cmds(repo))
 end
 
 --- Implements "mark as read". Updates the `b:guh.notifications` map; does NOT refresh `guh://status`.
@@ -741,7 +695,7 @@ function M.show_issue(id, repo, focus)
   local buf = state.init_buf('issue', focus, repo, id)
   state.update_info(buf)
   util.set_default_keymaps(buf)
-  util.run_cmds(buf, { term = true }, { gh.cmd(repo, 'issue', 'view', tostring(id), '--comments') })
+  util.run_cmds(buf, { term = true }, { gh.issue_view_cmd(id, repo) })
 end
 
 --- Shows an `id` of unknown kind (pr vs issue). Eagerly displays a `pr/` buffer for instant
@@ -753,9 +707,9 @@ end
 function M.show_pr_or_issue(id, repo, focus)
   state.init_buf('pr', focus, repo, id) -- Instant: show the buffer + winbar, before the probe resolves.
   util.progress('Loading...') -- Start a shared Progress msg, the async tasks will finish it.
-  util.system({ 'gh', 'api', ('repos/%s/pulls/%s'):format(repo, id) }, nil, function(r)
-    util.log('show_pr_or_issue.probe', { code = r.code })
-    if r.code == 0 then
+  gh.probe_is_pr(id, repo, function(is_pr)
+    util.log('show_pr_or_issue.probe', { is_pr = is_pr })
+    if is_pr then
       M.show_pr(id, repo, focus)
     else
       state.reinit_buf('pr', 'issue', repo, id)
@@ -851,25 +805,11 @@ end
 --- @param focus? boolean
 function M.show_pr(id, repo, focus)
   local buf = state.init_buf('pr', focus, repo, id)
-  -- `oid` is the full SHA; slice the first 7 chars. `committedDate` is ISO-8601.
-  local commits_tmpl = vim.text.indent(
-    0,
-    [[
-      {{printf "\n## Commits (%d)\n\n" (len .commits) -}}
-      {{range .commits}}{{slice .oid 0 12}}  {{slice .committedDate 0 10}}  {{.messageHeadline}}{{"\n"}}{{end}}
-    ]]
-  )
-  -- Render comments as raw markdown via a template (gh has no `--format=markdown`).
-  local comments_tmpl = vim.text.indent(
-    0,
-    [[
-      {{printf "\n## Discussion\n" -}}
-      {{if .comments}}{{range .comments}}{{printf "\n*%s (%s) — %s*\n\n%s\n" .author.login .authorAssociation (timeago .createdAt) .body}}{{end}}{{else}}{{"\n*No comments*\n"}}{{end}}
-    ]]
-  )
 
   util.set_default_keymaps(buf)
-  util.run_cmds(buf, {}, {
+  -- The header/body is rendered from `pr_data`; provider-specific extras (commits, discussion)
+  -- come from the provider.
+  local cmds = {
     -- Get the header+body in the pr_data query, bc "gh pr view" looks like shit.
     function(_, on_stdout, _, on_exit)
       local is_reload = not state.get_pr_data(repo, id)
@@ -884,9 +824,9 @@ function M.show_pr(id, repo, focus)
         end
       end)
     end,
-    gh.cmd(repo, 'pr', 'view', tostring(id), '--json', 'commits', '--template', commits_tmpl),
-    gh.cmd(repo, 'pr', 'view', tostring(id), '--json', 'comments', '--template', comments_tmpl),
-  }, function()
+  }
+  vim.list_extend(cmds, gh.pr_overview_cmds(id, repo))
+  util.run_cmds(buf, {}, cmds, function()
     vim._with({ buf = buf }, function()
       vim.cmd [[set breakindent nolist filetype=markdown]]
     end)
@@ -958,20 +898,15 @@ function M.load_pr(opts, on_done)
     end
   end
 
-  -- 1. Fetch PR data. Prefers cached `b:guh.pr_data`; callers force a refetch by clearing the cache.
-  gh.get_pr_data(id, repo, nil, function(pr, err)
-    if not pr then
-      return progress('failed', nil, '%s', err or ('PR #%s not found'):format(id))
+  -- Get the current PR diff. Caching `pr_data.diff_stdout` lets re-renders (e.g. toggling
+  -- "Viewed") skip this.
+  local diff_requested = false
+  local function fetch_diff()
+    if diff_requested or diff_stdout then
+      return
     end
-    pr_data = pr
-    diff_stdout = pr.diff_stdout or diff_stdout -- Fallback to the cached prdiff, if any.
-    try_render()
-  end)
-
-  -- 2. Get the current PR diff, unless `gh.get_pr_data` (synchronously) found a cached one.
-  --    Caching `pr_data.diff_stdout` lets re-renders (e.g. toggling "Viewed") skip this.
-  if not diff_stdout then
-    util.system(gh.cmd(repo, 'pr', 'diff', tostring(id)), nil, function(r)
+    diff_requested = true
+    util.system(gh.pr_diff_cmd(id, repo), nil, function(r)
       if r.code ~= 0 then
         progress('failed', nil, vim.trim(r.stderr or ''))
         return
@@ -979,6 +914,22 @@ function M.load_pr(opts, on_done)
       diff_stdout = r.stdout
       try_render()
     end)
+  end
+
+  -- 1. Fetch PR data. Prefers cached `b:guh.pr_data`; callers force a refetch by clearing the cache.
+  gh.get_pr_data(id, repo, nil, function(pr, err)
+    if not pr then
+      return progress('failed', nil, '%s', err or ('PR #%s not found'):format(id))
+    end
+    pr_data = pr
+    diff_stdout = pr.diff_stdout or diff_stdout -- Provider-supplied, or a previously cached diff.
+    fetch_diff() -- No-op when the provider (or the cache) already supplied one.
+    try_render()
+  end)
+
+  -- 2. Providers that don't ship the diff with `pr_data` fetch it concurrently with step 1.
+  if not gh.caps().diff_in_pr_data then
+    fetch_diff()
   end
 end
 
@@ -1094,7 +1045,7 @@ function M.edit_pr()
   local feat, id, repo = resolve_pr()
   local kind = feat == 'issue' and 'issue' or 'pr'
   local buf = state.init_buf('edit', true, repo, id)
-  local cmd = gh.cmd(repo, kind, 'edit', tostring(id))
+  local cmd = gh.edit_cmd(kind, id, repo)
   vim.api.nvim_open_tabpage(buf, true, {})
   util.set_default_keymaps(buf)
   vim.fn.jobstart(cmd, {
@@ -1120,8 +1071,9 @@ function M.toggle_viewed()
   if not pr_data or not pr_data.node_id then
     return util.msg(('PR #%s not loaded? ("R" to refresh)'):format(id), vim.log.levels.ERROR)
   end
-  -- `markFileAsViewed` cannot work with renamed/removed files.
-  local local_only = quasi ~= nil
+  -- `markFileAsViewed` cannot work with renamed/removed files. Providers with no server-side
+  -- "viewed" state (GitLab) treat every file as local-only, so `cv` still collapses the file.
+  local local_only = quasi ~= nil or not gh.caps().viewed_state
   if not local_only and not (pr_data.file_paths or {})[path] then
     return util.msg(('"%s" is not a current file in PR #%s'):format(path, id), vim.log.levels.WARN)
   end
@@ -1133,7 +1085,7 @@ function M.toggle_viewed()
 
   local msg = ('%s%s: %s'):format(
     viewed and 'Viewed' or 'Unviewed',
-    local_only and viewed and (' "%s" file (refresh will forget)'):format(quasi) or '',
+    (local_only and viewed and quasi) and (' "%s" file (refresh will forget)'):format(quasi) or '',
     path
   )
 
