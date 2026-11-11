@@ -1,0 +1,14 @@
+lua/guh/remote.lua
+  h_3fa0a37c1df293 1-117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4e03b48a4f09f837be05de70698b90c9044ce2d8",
+  "prompts": {},
+  "humans": {
+    "h_3fa0a37c1df293": {
+      "author": "Cherry Ramatis <cherry.ramatis@icloud.com>"
+    }
+  }
+}
