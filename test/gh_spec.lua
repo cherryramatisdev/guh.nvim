@@ -80,7 +80,7 @@ describe('guh.gh', function()
 
   it('to_ci_jobs: extracts databaseId+runId, dedupes by name, drops non-actions/skipped, sorts', function()
     n.exec_lua(function()
-      local to_ci_jobs = require('guh.gh')._to_ci_jobs
+      local to_ci_jobs = require('guh.provider.github')._to_ci_jobs
 
       -- Shape: a `node` with `headCommit.nodes[1].commit.statusCheckRollup.contexts.nodes[]`.
       local function ctx(name, conclusion, started_at, job_id, opts)
