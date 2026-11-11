@@ -1,0 +1,14 @@
+lua/guh/provider/gitlab.lua
+  h_3fa0a37c1df293 1-1068
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "275579a0814584ae28285f39eed4f07781c2ac76",
+  "prompts": {},
+  "humans": {
+    "h_3fa0a37c1df293": {
+      "author": "Cherry Ramatis <cherry.ramatis@icloud.com>"
+    }
+  }
+}
