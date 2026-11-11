@@ -1,0 +1,14 @@
+lua/guh/pr.lua
+  h_3fa0a37c1df293 10-16,40,42-45,57-58,196-200,258-260,262-263,290-292,295,602,661,698,710-712,810-812,827-829,901-918,925-926,930-932,1048,1074-1076,1088
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7a6fe29f0229c96ad6fa7efeececb201acb48319",
+  "prompts": {},
+  "humans": {
+    "h_3fa0a37c1df293": {
+      "author": "Cherry Ramatis <cherry.ramatis@icloud.com>"
+    }
+  }
+}
