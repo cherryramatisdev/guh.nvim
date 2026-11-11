@@ -3,14 +3,14 @@
 > [!NOTE]
 > This plugin is pretty sweet, but still WIP/beta. PRs/feedback welcome!
 
-Work with GitHub in Neovim. Guh is ~2k lines of unimpeachable code, leveraging builtin Nvim
-mechanisms such as diagnostics, 'scrollbind', progress messages and 'winbar', otherwise delegating
-to the `gh` CLI in a `:terminal` buffer.
+Work with GitHub and GitLab in Neovim. Guh is ~2k lines of unimpeachable code, leveraging builtin
+Nvim mechanisms such as diagnostics, 'scrollbind', progress messages and 'winbar', otherwise
+delegating to the `gh` (or `glab`) CLI in a `:terminal` buffer.
 
 - Minimal (10x smaller than Octo.nvim).
-- No config.
+- No config. (The backend is auto-detected from the git remote.)
 - One command: `:Guh`
-- View any GitHub object, including CI logs.
+- View any GitHub/GitLab object, including CI logs.
 - Review PRs.
 - Read notifications.
 
@@ -42,6 +42,12 @@ Run `:Guh <target>` to view a PR/issue/commit/repo.
 :Guh neovim/neovim
 " guh:// URI
 :Guh guh://neovim/neovim/pr/35951
+" GitLab MR/issue/commit URLs (nested groups supported)
+:Guh https://gitlab.com/group/subgroup/project/-/merge_requests/12
+:Guh https://gitlab.com/group/subgroup/project/-/issues/7
+:Guh https://gitlab.com/group/subgroup/project/-/commit/a1b2c3d
+:Guh group/subgroup/project#12
+:Guh group/subgroup/project
 " Cursor target
 :Guh .
 ```
@@ -78,9 +84,26 @@ Requirements:
 
 - Nvim 0.13+
 - ["gh" (GitHub CLI)](https://cli.github.com/)
+- ["glab" (GitLab CLI)](https://gitlab.com/gitlab-org/cli) — only for GitLab repos.
 - (Optional) For working with Git, use a plugin such as [vim-fugitive](https://github.com/tpope/vim-fugitive).
 - (Optional) For highlighting diffs, use a plugin such as [diffs.nvim](https://github.com/barrettruth/diffs.nvim).
 - (Optional) For improved Markdown rendering, use a plugin such as [render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim).
+
+## Providers
+
+Guh picks a backend from the git remote of the repo it is viewing: a host containing `github`
+(e.g. `github.com`) uses `gh`; **every other host** uses `glab`. That rule is what makes
+self-hosted GitLab work when the hostname contains neither word (e.g. `git.example.com`).
+
+To force one, set a global before the plugin loads:
+
+```lua
+vim.g.guh_provider = 'gitlab' -- or 'github'
+```
+
+A few GitHub features have no GitLab equivalent; Guh degrades instead of erroring. Per-file
+"Viewed" state is local-only on GitLab, `cM` has no `--admin` variant, and "Request changes"
+posts a note. See `:help guh-provider`.
 
 ## Related
 
