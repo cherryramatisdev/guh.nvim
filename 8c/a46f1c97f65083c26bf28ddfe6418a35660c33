@@ -1,0 +1,14 @@
+test/gh_spec.lua
+  h_3fa0a37c1df293 83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8ca46f1c97f65083c26bf28ddfe6418a35660c33",
+  "prompts": {},
+  "humans": {
+    "h_3fa0a37c1df293": {
+      "author": "Cherry Ramatis <cherry.ramatis@icloud.com>"
+    }
+  }
+}
