@@ -1,0 +1,31 @@
+doc/guh.txt
+  s_15307ed3a575cf::t_a8944aec8d4a48 6-7
+  s_15307ed3a575cf::t_bf131a4e918106 146-147
+  s_15307ed3a575cf::t_a8242f105e7467 352-358,372,384-390
+  s_15307ed3a575cf::t_528eb1f3747350 450-460,465-467
+  s_15307ed3a575cf::t_7e44f5ce9fdacf 25,34-55,391
+  s_15307ed3a575cf::t_9822dd1bc91e46 173,176
+  s_15307ed3a575cf::t_77f80290c2160c 56
+  s_15307ed3a575cf::t_197943122e6e80 392
+README.md
+  s_15307ed3a575cf::t_66da529bc15c7a 87,92-106
+  s_15307ed3a575cf::t_b2891ef5429982 45-50
+  s_15307ed3a575cf::t_f37ad03b79dd93 6-8,11,13
+  s_15307ed3a575cf::t_5e218ebeff8b00 107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "08a39ee4ab0a2be38c336c83c37dbe5d099a13bc",
+  "prompts": {},
+  "sessions": {
+    "s_15307ed3a575cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9e35a60-b7b1-4c7b-b2c3-1faa8f80fb9d",
+        "model": "deepseek-v4.1-flash"
+      },
+      "human_author": "Cherry Ramatis <cherry.ramatis@icloud.com>"
+    }
+  }
+}
