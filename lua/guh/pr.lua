@@ -830,8 +830,11 @@ function M.show_pr(id, repo, focus)
     -- Get the header+body in the pr_data query, bc "gh pr view" looks like shit.
     function(_, on_stdout, _, on_exit)
       local is_reload = not state.get_pr_data(repo, id)
-      gh.get_pr_data(id, repo, nil, function(pr)
-        on_stdout(nil, { pr and render_pr_header(pr) or 'FAILED render_pr_header' }) -- Note: Must send non-nil to on_stdout to allow it to advance.
+      gh.get_pr_data(id, repo, nil, function(pr, err)
+        -- Note: must send non-nil to on_stdout so `run_cmds` can advance.
+        local header = pr and render_pr_header(pr)
+          or ('Failed to load PR #%s: %s'):format(id, err or 'unknown error')
+        on_stdout(nil, { header })
         on_exit()
         -- `preload_ci_logs` is idempotent: skips per-job if already-rendered or "in_progress".
         if pr and is_reload then
