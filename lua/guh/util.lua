@@ -36,9 +36,13 @@ function M.system(cmd, opts, cb)
   opts = opts or {}
   opts.text = opts.text == nil and true or opts.text
   vim.system(cmd, opts, function(result)
-    -- Passive rate-limit detection.
-    if result.code ~= 0 and cmd[1] == 'gh' then
-      require('guh.gh').note_rate_limit(result.stderr or '', result.code)
+    -- Passive rate-limit detection. Resolve the provider by binary: this runs in a fast event
+    -- context, so it must NOT go through `guh.gh` (which reads `vim.b` via `provider.current()`).
+    if result.code ~= 0 then
+      local p = require('guh.provider').for_cmd(cmd[1])
+      if p then
+        p.note_rate_limit(result.stderr or '', result.code)
+      end
     end
     if type(cb) == 'function' then
       vim.schedule_wrap(cb)(result)
@@ -66,14 +70,158 @@ function M.run_async(fn)
   return vim.async.run(fn):raise_on_error()
 end
 
+--- Kind segments that introduce a PR/MR or issue number, in GitHub ("pull") and GitLab
+--- ("merge_requests") spelling.
+local pr_kinds = {
+  pull = true,
+  pr = true,
+  prdiff = true,
+  prcomments = true,
+  prlogs = true,
+  merge_request = true,
+  merge_requests = true,
+}
+local issue_kinds = { issue = true, issues = true }
+local commit_kinds = { commit = true, commits = true }
+local tree_kinds = { tree = true }
+
+--- Every `Feat` name, so `guh://<repo>/<feat>/<id>` can be told apart from a nested repo path.
+local feats = {
+  comment = true,
+  commit = true,
+  edit = true,
+  file = true,
+  issue = true,
+  merge = true,
+  pr = true,
+  prcomments = true,
+  prdiff = true,
+  prlogs = true,
+  repo = true,
+  review = true,
+  status = true,
+}
+
+--- Builds the target fields for a "<kind>/<value>" pair, or nil if `kind` introduces no target.
+---
+--- @return GuhTarget?
+local function target_for_kind(kind, val)
+  if not kind then
+    return nil
+  end
+  if pr_kinds[kind] or issue_kinds[kind] then
+    local id = tonumber(val)
+    return id and { id = id, is_pr = pr_kinds[kind] == true } or nil
+  elseif commit_kinds[kind] then
+    return { sha = val }
+  elseif tree_kinds[kind] then
+    return { branch = val }
+  end
+  return nil
+end
+
+--- Splits a project path into `owner`/`repo`. `owner` is everything before the last "/", so
+--- `owner .. "/" .. repo` reconstructs the full path — needed for nested GitLab groups
+--- ("group/subgroup/project" -> owner="group/subgroup", repo="project").
+local function set_repo(t, repo_path)
+  t.owner, t.repo = repo_path:match('^(.*)/([^/]+)$')
+  return t
+end
+
+--- Parses a `guh://<repo>[/<feat>/<id>]` URI. Parsed from the right, because `<repo>` may itself
+--- contain "/" (nested GitLab groups).
+---
+--- @return GuhTarget?
+local function parse_uri(g)
+  if g == '' then
+    return nil
+  end
+  local repo, feat, id = g:match('^(.-)/(%a[%w_]*)/([^/]+)$')
+  if repo and feats[feat] then
+    local t = target_for_kind(feat, id)
+    return t and set_repo(t, repo) or nil -- A non-target feat (edit/merge/review/…) isn't openable.
+  end
+  -- "<repo>" alone -> repo overview (any depth).
+  local owner = g:match('^(.*)/([^/]+)$')
+  if owner and owner ~= '' then
+    return set_repo({}, g)
+  end
+  return nil
+end
+
+--- Parses a repo path (already stripped of any scheme/host).
+---
+--- @return GuhTarget?
+local function parse_path(path)
+  -- GitLab: "<project>/-/<kind>/<val>" (e.g. "g/s/p/-/merge_requests/13"). No `$` anchor: ignore
+  -- any trailing tab segment ("…/-/merge_requests/13/diffs").
+  local proj, rest = path:match('^(.-)/%-/(.+)$')
+  if proj then
+    local kind, val = rest:match('^(%a[%w_]*)/([^/]+)')
+    local t = target_for_kind(kind, val)
+    return t and set_repo(t, proj) or set_repo({}, proj)
+  end
+
+  -- Branch: "<owner>/<repo>/tree/<branch>" (branch may contain "/", ".", etc.).
+  local o, r, branch = path:match('^([%w%._-]+)/([%w%._-]+)/tree/(.+)$')
+  if o then
+    return set_repo({ branch = branch }, o .. '/' .. r)
+  end
+
+  -- "<owner>/<repo>/<kind>/<val>".
+  local ko, kr, kind, val = path:match('^([%w%._-]+)/([%w%._-]+)/(%a[%w_]*)/([%w%._-]+)')
+  if ko then
+    local t = target_for_kind(kind, val)
+    if t then
+      return set_repo(t, ko .. '/' .. kr)
+    end
+    -- Unknown kind: fall through (treated as a repo target below).
+  end
+
+  -- "<repo>#<id>" (any depth, so nested GitLab groups work).
+  local rp, sid = path:match('^(.-)#(%d+)$')
+  if rp and rp:find('/') then
+    return set_repo({ id = tonumber(sid) }, rp)
+  end
+
+  -- "<repo>" (any depth) -> repo overview.
+  local owner = path:match('^(.*)/([^/]+)$')
+  if owner and owner ~= '' then
+    return set_repo({}, path)
+  end
+
+  -- Bare "#N".
+  local n = path:match('^#(%d+)$')
+  if n then
+    return { id = tonumber(n) }
+  end
+
+  -- Bare commit SHA: 7-40 hex chars with at least one a-f letter (to disambiguate from numeric IDs).
+  if path:match('^[%da-fA-F]+$') and #path >= 7 and #path <= 40 and path:match('[a-fA-F]') then
+    return { sha = path }
+  end
+
+  -- Bare number, else the first "#N"/"N" match (cWORD garbage like "#42578:").
+  local val = tonumber(path) or tonumber(path:match('#(%d+)') or path:match('%d+'))
+  if val and val > 0 then
+    return { id = val }
+  end
+  return nil
+end
+
 --- Parses a :Guh argument. Accepts:
 ---   - bare number: `"13"`
 ---   - bare commit SHA (7-40 hex chars, must contain a-f): `"a1b2c3d"`
 ---   - GitHub URL: `"https://github.com/owner/repo/pull/13"`, `"…/issues/13"`, `"…/commit/<sha>"`, `"…/tree/<branch>"`
----   - Repo URL: `"https://github.com/owner/repo"`
----   - slug: `"owner/repo#13"`, or bare repo slug `"owner/repo"`.
+---   - GitLab URL: `"https://gitlab.com/group/sub/project/-/merge_requests/13"`, `"…/-/issues/13"`,
+---     `"…/-/commit/<sha>"`, `"…/-/tree/<branch>"`
+---   - Repo URL: `"https://github.com/owner/repo"`, `"https://gitlab.com/group/sub/project"`
+---   - slug: `"owner/repo#13"`, `"group/sub/project#13"`, or a bare repo slug (any depth).
 ---   - guh URI: `"guh://owner/repo/pr/13"`, `"guh://owner/repo/issue/13"`, `"guh://owner/repo/commit/<sha>"`, …
 ---   - fallback: the first `#N` (else `N`) match: `"#42578:"`, `"fix(#42578):"`.
+---
+--- The URL host is deliberately NOT returned: callers that need it (to pick a provider) use
+--- `guh.remote.host_of()` on the raw argument.
 ---
 --- @param arg string
 --- @return GuhTarget?
@@ -87,58 +235,19 @@ function M.parse_target(arg)
     return { status = true }
   end
 
-  -- Reduce a URI to a bare "owner/repo[/<kind>/<value>]" path; bare slugs ("owner/repo",
-  -- "owner/repo#N", "#N", SHA, N) fall through as-is. Also extracts markdown URLs ("[#918](https://github.com/o/r/issues/918)").
-  local path = (arg:match('https?://github%.com/([%w._/-]+)') or arg:match('^guh://(.+)$') or arg):gsub('/$', '')
-
-  -- GitHub web "kind" (pull/issues/commit) and guh:// "feat" both live in the 3rd path component.
-  local pr_kinds = { pull = true, pr = true, prdiff = true, prcomments = true, prlogs = true }
-
-  -- Branch: "owner/repo/tree/<branch>" (branch may contain "/", ".", etc.).
-  local owner, repo, val = path:match('^([%w%._-]+)/([%w%._-]+)/tree/(.+)$')
-  if owner then
-    return { owner = owner, repo = repo, branch = val }
+  -- `guh://<repo>[/<feat>/<id>]` URI.
+  local uri = arg:match('^guh://(.+)$')
+  if uri then
+    return parse_uri((uri:gsub('/+$', '')))
   end
 
-  local kind
-  -- No `$` anchor: ignore any trailing tab segment ("…/pull/13/changes?w=1", "…/files", "…/commits").
-  owner, repo, kind, val = path:match('^([%w%._-]+)/([%w%._-]+)/(%w+)/(%w+)')
-  if owner then
-    if kind == 'commit' then
-      return { owner = owner, repo = repo, sha = val }
-    elseif pr_kinds[kind] or kind == 'issue' or kind == 'issues' then
-      return { owner = owner, repo = repo, id = tonumber(val), is_pr = pr_kinds[kind] == true }
-    end
-    -- Unknown kind: fall through (treated as a repo target below).
+  -- Web URL (GitHub or GitLab). Unanchored, so markdown links ("[#918](https://…)") work.
+  local _, path = arg:match('https?://([^/%s]+)/([%w%._/%-]+)')
+  if path then
+    return parse_path((path:gsub('/+$', '')))
   end
 
-  owner, repo, val = path:match('^([%w%._-]+)/([%w%._-]+)#(%d+)$')
-  if owner then
-    return { owner = owner, repo = repo, id = tonumber(val) }
-  end
-
-  -- Bare "owner/repo" (no id) -> repo overview.
-  owner, repo = path:match('^([%w%._-]+)/([%w%._-]+)$')
-  if owner then
-    return { owner = owner, repo = repo }
-  end
-
-  val = path:match('^#(%d+)$')
-  if val then
-    return { id = tonumber(val) }
-  end
-
-  -- Bare commit SHA: 7-40 hex chars with at least one a-f letter (to disambiguate from numeric IDs).
-  if path:match('^[%da-fA-F]+$') and #path >= 7 and #path <= 40 and path:match('[a-fA-F]') then
-    return { sha = path }
-  end
-
-  -- Bare number, else the first "#N"/"N" match (cWORD garbage like "#42578:").
-  val = tonumber(path) or tonumber(path:match('#(%d+)') or path:match('%d+'))
-  if val and val > 0 then
-    return { id = val }
-  end
-  return nil
+  return parse_path((arg:gsub('/+$', '')))
 end
 
 function M.is_empty(value)
