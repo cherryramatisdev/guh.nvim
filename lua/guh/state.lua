@@ -261,7 +261,7 @@ function M.reinit_buf(from_feat, to_feat, repo, id)
   local buf = assert(bufs[from_feat][key])
   bufs[from_feat][key] = nil
   bufs[to_feat][key] = buf
-  M.set_buf_name(buf, to_feat, key)
+  M.set_buf_name(buf, to_feat, repo, id)
   M.set_b_key(buf, { 'guh', 'feat' }, to_feat)
   vim.api.nvim_exec_autocmds('BufWinEnter', { buffer = buf, group = 'guh' })
 end
@@ -296,7 +296,7 @@ function M.init_buf(feat, focus, repo, id, bufstate)
   -- Init `b:guh` + buf name BEFORE show_buf(), so the BufWinEnter handler (which sets 'winbar') has an initialized buf.
   -- (Note: `info_fields` defaults were seeded at buffer-creation by `get_buf`.)
   set_b_guh(buf, bufstate)
-  M.set_buf_name(buf, feat, key)
+  M.set_buf_name(buf, feat, repo, id)
   if focus ~= nil then
     show_buf(buf, focus)
   end
@@ -321,26 +321,34 @@ function M.invalidate(buf)
 end
 
 --- Gets buffer URI:
---- - `guh://<owner>/<repo>` for repo overview.
---- - `guh://<owner>/<repo>/<feat>/<id>` for per-repo per-feature buffers.
+--- - `guh://<repo>` for the repo overview.
+--- - `guh://<repo>/<feat>/<id>` for per-repo per-feature buffers.
 --- - `guh://<feat>` for "global" buffers (`guh://status`).
 ---
+--- `<repo>` is passed in explicitly rather than re-parsed from the joined key, because it may
+--- itself contain "/": GitLab projects can be nested ("group/subgroup/project").
+---
 --- @param feat Feat
---- @param key string The `get_key(repo, id)` value: "owner/repo/<id>" (per-repo) or "<id>" (repo-less, e.g. "all" for guh://status).
-local function get_buf_name(feat, key)
-  local owner, repo, n = key:match('^([^/]+)/([^/]+)/(.+)$')
-  if owner then
-    if feat == 'repo' then
-      return ('guh://%s/%s'):format(owner, repo)
-    end
-    return ('guh://%s/%s/%s/%s'):format(owner, repo, feat, n)
+--- @param repo? string "owner/name", or "group/subgroup/project".
+--- @param id string|integer
+local function get_buf_name(feat, repo, id)
+  if not repo then
+    return ('guh://%s'):format(feat)
   end
-  return ('guh://%s'):format(feat)
+  if feat == 'repo' then
+    return ('guh://%s'):format(repo)
+  end
+  return ('guh://%s/%s/%s'):format(repo, feat, id)
 end
 
---- Sets the buffer name to "guh://…/…" format.
-function M.set_buf_name(buf, feat, key)
-  local bufname = get_buf_name(feat, key)
+--- Sets the buffer name to "guh://…" format.
+---
+--- @param buf integer
+--- @param feat Feat
+--- @param repo? string "owner/name", or "group/subgroup/project".
+--- @param id string|integer
+function M.set_buf_name(buf, feat, repo, id)
+  local bufname = get_buf_name(feat, repo, id)
   local prev_altbuf = vim.fn.bufnr('#')
 
   -- NOTE: This leaves orphan "term://~/…:/usr/local/bin/gh" buffers.
