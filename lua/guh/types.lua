@@ -116,7 +116,6 @@
 --- @field createdAt string
 --- @field defaultBranch? string Repo's default branch.
 --- @field deletions number Lines deleted across the diff.
---- @field diff_refs? { base_sha: string, head_sha: string, start_sha: string } GitLab diff refs (required to anchor a new note).
 --- @field diff_stdout? string Cached raw `gh pr diff` output. Set by `pr.load_pr`.
 --- @field file_paths table<string, true> Set of all current paths in this PR's diff. Used to validate `markFileAsViewed` targets locally.
 --- @field headRefName string

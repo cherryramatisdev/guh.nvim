@@ -381,8 +381,6 @@ local function to_pr(mr, project, commits, discussions, jobs, emoji, repo)
     headRefName = mr.source_branch,
     headRefOid = head_sha,
     baseRefOid = vim.tbl_get(mr, 'diff_refs', 'base_sha'),
-    -- Kept for `comments.new_comment` (GitLab requires all three diff refs to anchor a note).
-    diff_refs = mr.diff_refs,
     defaultBranch = project and project.default_branch or nil,
     additions = nil, -- Patched by `get_pr_data` from the fetched diff (GitLab has no diffstat).
     deletions = nil,
@@ -517,11 +515,11 @@ end
 --- @param on_result fun(res?: { lines: string[] }, err?: string)
 function M.file(path, ref, repo, on_result)
   -- `--placeholder` makes glab encode the value as a single path segment (so "/" -> %2F).
-  local argv = proj_api(repo, 'repository/files/:file/raw', {
+  -- NB: `ref` must go in the query string, NOT via `-f`: adding any field flag switches the
+  -- request to POST.
+  local argv = proj_api(repo, 'repository/files/:file/raw?ref=' .. enc(ref), {
     '--placeholder',
     'file=' .. path,
-    '-f',
-    'ref=' .. ref,
   })
   util.system(argv, nil, function(r)
     if r.code ~= 0 then
@@ -709,71 +707,56 @@ local function api_call(logname, method, repo, endpoint, fields, cb)
   end)
 end
 
---- @param logname string
---- @param method string
---- @param endpoint string User-level endpoint.
---- @param fields { [1]: string, [2]: string }[]
---- @param cb fun(resp: table)
-local function user_api_call(logname, method, endpoint, fields, cb)
-  local extra = { '--method', method }
-  for _, kv in ipairs(fields) do
-    vim.list_extend(extra, kv)
-  end
-  local argv = user_api(endpoint, extra)
-  util.log(logname .. ' request', argv)
+--------------------------------------------------------------------------- writes
+
+--- Posts a new diff comment, via `glab mr note create --file/--line`.
+---
+--- @param pr PullRequest (needs `number`)
+--- @param side 'LEFT'|'RIGHT'|nil
+function M.new_comment(pr, body, path, start_line, line, side, repo, cb)
+  -- `--line` targets the new version of the file; `--old-line` a removed line. Ranges are
+  -- "start:end".
+  local range = (start_line and start_line ~= line) and f('%d:%d', start_line, line) or tostring(line)
+  local argv = M.cmd(
+    repo,
+    'mr',
+    'note',
+    'create',
+    tostring(pr.number),
+    '-m',
+    body,
+    '--file',
+    path,
+    side == 'LEFT' and '--old-line' or '--line',
+    range
+  )
+  util.log('new_comment request', argv)
   util.system(argv, nil, function(r)
-    local resp = parse_or_default(r.stdout, { errors = {} })
-    util.log(logname .. ' resp', resp)
-    cb(resp)
+    cb(r.code == 0 and {} or { errors = { { message = vim.trim(r.stderr or '') } } })
   end)
 end
 
---------------------------------------------------------------------------- writes
-
---- Posts a new diff comment (a GitLab "discussion" anchored by `position`).
----
---- @param pr PullRequest (needs `number` and `diff_refs`)
---- @param side 'LEFT'|'RIGHT'|nil
-function M.new_comment(pr, body, path, start_line, line, side, repo, cb)
-  local dr = pr.diff_refs or {}
-  local right = side ~= 'LEFT'
-  local position = {
-    position_type = 'text',
-    base_sha = dr.base_sha,
-    head_sha = dr.head_sha or pr.headRefOid,
-    start_sha = dr.start_sha,
-    old_path = path,
-    new_path = path,
-  }
-  if right then
-    position.new_line = line
-  else
-    position.old_line = line
-  end
-  if start_line and start_line ~= line then
-    local axis = right and 'new_line' or 'old_line'
-    -- NB: `end` is a Lua keyword, hence the bracket key.
-    position.line_range = {
-      start = { type = right and 'new' or 'old', [axis] = start_line },
-      ['end'] = { type = right and 'new' or 'old', [axis] = line },
-    }
-  end
-  api_call('new_comment', 'POST', repo, f('merge_requests/%d/discussions', pr.number), {
-    { '-f', 'body=' .. body },
-    { '-f', 'position=' .. vim.json.encode(position) },
-  }, cb)
-end
-
---- Replies to a comment thread. GitLab needs the *discussion* id, not the note id.
+--- Replies to a comment thread, via `glab mr note create --reply`.
 ---
 --- @param thread_id? string Discussion id (`Comment.thread_node_id`).
 --- @param cb fun(resp: table)
 function M.reply_to_comment(prnum, body, reply_to, repo, thread_id, cb)
   vim.validate('repo', repo, 'string')
-  local discussion = thread_id or reply_to
-  api_call('reply_to_comment', 'POST', repo, f('merge_requests/%s/discussions/%s/notes', prnum, discussion), {
-    { '-f', 'body=' .. body },
-  }, cb)
+  local argv = M.cmd(
+    repo,
+    'mr',
+    'note',
+    'create',
+    tostring(prnum),
+    '-m',
+    body,
+    '--reply',
+    tostring(thread_id or reply_to)
+  )
+  util.log('reply_to_comment request', argv)
+  util.system(argv, nil, function(r)
+    cb(r.code == 0 and {} or { errors = { { message = vim.trim(r.stderr or '') } } })
+  end)
 end
 
 --- Posts a top-level comment on an MR or issue overview.
@@ -921,12 +904,7 @@ function M.get_user()
   if cached_user then
     return cached_user
   end
-  local argv = { 'glab', 'api' }
-  if last_host then
-    vim.list_extend(argv, { '--hostname', last_host })
-  end
-  table.insert(argv, 'user')
-  local r = vim.system(argv, { text = true }):wait()
+  local r = vim.system(user_api('user'), { text = true }):wait()
   if r.code == 0 then
     local user = parse_or_default(r.stdout, nil)
     cached_user = user and user.username or nil
