@@ -16,7 +16,7 @@
 --- @field status? boolean true = the global `guh://status` page.
 
 --- @class Notification A `b:guh.notifications` entry (keyed by slug "owner/repo#NNN").
---- @field thread_id string GitHub notification thread-id (for mark-as-read/done).
+--- @field thread_id string|integer Provider notification id (GitHub thread id; GitLab to-do id).
 --- @field is_pr boolean Lets `pr.select` skip its PR-vs-issue probe.
 --- @field is_read? boolean Marked read this session (via "cV"). Kept in the map so `guh://status` can dim it.
 
@@ -28,7 +28,7 @@
 --- @field jobs? integer[] In-flight jobs for the current `run_cmds` run.
 --- @field notifications? table<string, Notification> Unread notifications on `guh://status` (keyed by slug).
 --- @field pr_data? PullRequest
---- @field repo? string "owner/name"
+--- @field repo? string Project path: "owner/name", or "group/subgroup/project" for GitLab.
 ---
 --- "Info fields: denormalized values for use by 'winbar' (but possibly other consumers later).
 --- @field branch string Target branch (if non-default).
@@ -47,7 +47,9 @@
 --- @class Comment
 --- @field body string
 --- @field diff_hunk string
---- @field end_line number End of comment range (1-indexed GitHub file-line). Falls back to `originalLine` for LEFT-side / outdated threads (those have no current-HEAD `line`).
+--- @field end_line number End of comment range (1-indexed file line, provider-normalized).
+---   For GitHub this falls back to `originalLine` for LEFT-side / outdated threads
+---   (those have no current-HEAD `line`).
 --- @field end_bufline? integer End of _rendered_ comment range (1-indexed "prdiff" buffer-line). See `start_bufline`.
 --- @field id number
 --- @field path string For `outdated`: a synthetic key `outdated-<thread_id>:<real_path>`.
@@ -61,7 +63,8 @@
 --- @field resolved? boolean true if GraphQL marked the thread `isResolved`. Hidden unless `PullRequest.show_resolved`.
 --- @field in_head? boolean Thread anchors to a current-HEAD line (decides "outside" vs "outdated").
 --- @field thread_id? number GraphQL thread id (root comment databaseId).
---- @field thread_node_id? string GraphQL global node id of the thread (e.g. `PRRT_kw…`). Needed by the resolveReviewThread mutation.
+--- @field thread_node_id? string Provider thread id. GitHub: GraphQL global node id of the
+---   thread (e.g. `PRRT_kw…`), needed by the resolveReviewThread mutation. GitLab: discussion id.
 
 --- @class CommentThread
 --- @field comments Comment[]
@@ -91,16 +94,16 @@
 --- @field messageBody string
 --- @field authors table[]
 
---- @class CIJob GitHub Actions check-run summary (one matrix-expanded job at PR head-commit).
+--- @class CIJob One CI job at the PR/MR head commit, normalized across providers.
 --- @field conclusion? string lowercase: "success", "failure", "cancelled", … (nil if in-progress).
---- @field databaseId integer Workflow job id (parsed from `detailsUrl`), feeds `gh.get_pr_ci_logs`.
---- @field name string "workflow: job-name" (e.g. "CI: build (ubuntu)"), or just the job-name if no workflow.
---- @field runId integer Workflow run id (parsed from `detailsUrl`), feeds `gh run rerun`.
+--- @field databaseId integer Job id, feeds `get_pr_ci_log`/`get_pr_ci_logs`.
+--- @field name string "workflow: job-name" (e.g. "CI: build (ubuntu)"), or just the job-name.
+--- @field runId integer Workflow/pipeline id, feeds `rerun_ci`.
 --- @field startedAt? string
 --- @field status? string lowercase: "completed", "in_progress", "queued", …
---- @field url? string Web URL of the job (`detailsUrl`).
+--- @field url? string Web URL of the job.
 
---- @class PullRequest PR data selected from GraphQL by `gh.get_pr_data`.
+--- @class PullRequest PR/MR data produced by the active provider's `get_pr_data`.
 --- @field additions number Lines added across the diff.
 --- @field author table `{ login, name? }` (`name` only for User authors, not Bots).
 --- @field authorAssociation? string Author's repo association (e.g. "OWNER", "MEMBER", "CONTRIBUTOR", "NONE").
@@ -113,6 +116,7 @@
 --- @field createdAt string
 --- @field defaultBranch? string Repo's default branch.
 --- @field deletions number Lines deleted across the diff.
+--- @field diff_refs? { base_sha: string, head_sha: string, start_sha: string } GitLab diff refs (required to anchor a new note).
 --- @field diff_stdout? string Cached raw `gh pr diff` output. Set by `pr.load_pr`.
 --- @field file_paths table<string, true> Set of all current paths in this PR's diff. Used to validate `markFileAsViewed` targets locally.
 --- @field headRefName string
@@ -123,7 +127,8 @@
 --- @field n_resolved integer Resolved review-thread count.
 --- @field n_threads integer Total review-thread count (resolved + unresolved).
 --- @field n_viewed_threads? integer Unresolved threads hidden in "Viewed" files. Set by `pr.load_pr`.
---- @field node_id string GraphQL global node id (e.g. `PR_kw…`). Needed by mutations like `markFileAsViewed`.
+--- @field node_id string Provider node id (GitHub: GraphQL global id, e.g. `PR_kw…`; GitLab: MR id).
+--- @field notes? table[] Overview (non-diff) comments. Rendered by the provider's `pr_overview_cmds`.
 --- @field number number
 --- @field raw_comments Comment[] Flat per-comment list from `flatten_review_threads`.
 --- @field reactions { content: string, reactors: { totalCount: integer } }[] Reaction groups (incl. zero-count).
@@ -133,4 +138,4 @@
 --- @field state 'OPEN'|'CLOSED'|'MERGED'
 --- @field title string
 --- @field url string
---- @field viewed table<string, boolean> Per-file "Viewed" flag. Also for quasi-filepaths (e.g. `outdated-<id>:<path>`).
+--- @field viewed table<string, boolean> Per-file "Viewed" flag. Also for quasi-filepaths (e.g. `outdated-<id>:<path>`). Empty for providers without server-side viewed state (GitLab).
